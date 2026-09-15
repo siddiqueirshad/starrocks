@@ -1360,6 +1360,12 @@ void LakeDataSource::init_counter(RuntimeState* state) {
             ADD_CHILD_COUNTER(_runtime_profile, "ShortKeyRangeNumber", TUnit::UNIT, segment_init_name);
     _column_iterator_init_timer = ADD_CHILD_TIMER(_runtime_profile, "ColumnIteratorInit", segment_init_name);
     _bitmap_index_iterator_init_timer = ADD_CHILD_TIMER(_runtime_profile, "BitmapIndexIteratorInit", segment_init_name);
+    _segment_init_prepare_timer = ADD_CHILD_TIMER(_runtime_profile, "SegmentInitPrepare", segment_init_name);
+    _rowid_range_filter_timer = ADD_CHILD_TIMER(_runtime_profile, "RowidRangeFilter", segment_init_name);
+    _precomputed_range_filter_timer = ADD_CHILD_TIMER(_runtime_profile, "PrecomputedRangeFilter", segment_init_name);
+    _tablet_range_filter_timer = ADD_CHILD_TIMER(_runtime_profile, "TabletRangeFilter", segment_init_name);
+    _del_vector_apply_timer = ADD_CHILD_TIMER(_runtime_profile, "DelVectorApply", segment_init_name);
+    _segment_init_finalize_timer = ADD_CHILD_TIMER(_runtime_profile, "SegmentInitFinalize", segment_init_name);
     _zone_map_filter_timer = ADD_CHILD_TIMER(_runtime_profile, "ZoneMapIndexFilter", segment_init_name);
     _rows_key_range_filter_timer = ADD_CHILD_TIMER(_runtime_profile, "ShortKeyFilter", segment_init_name);
     _bf_filter_timer = ADD_CHILD_TIMER(_runtime_profile, "BloomFilterFilter", segment_init_name);
@@ -1564,6 +1570,7 @@ void LakeDataSource::update_counter(RuntimeState* state) {
     COUNTER_UPDATE(_create_seg_iter_timer, reader_stats.create_segment_iter_ns);
     COUNTER_UPDATE(_rows_read_counter, _num_rows_read);
 
+<<<<<<< HEAD
     COUNTER_UPDATE(_io_timer, reader_stats.io_ns);
     COUNTER_UPDATE(_read_compressed_counter, reader_stats.compressed_bytes_read);
     COUNTER_UPDATE(_decompress_timer, reader_stats.decompress_ns);
@@ -1587,6 +1594,37 @@ void LakeDataSource::update_counter(RuntimeState* state) {
     COUNTER_UPDATE(_read_pk_index_timer, reader_stats.read_pk_index_ns);
 
     COUNTER_UPDATE(_raw_rows_counter, reader_stats.raw_rows_read);
+=======
+    COUNTER_UPDATE(_io_timer, _reader->stats().io_ns);
+    COUNTER_UPDATE(_read_compressed_counter, _reader->stats().compressed_bytes_read);
+    COUNTER_UPDATE(_decompress_timer, _reader->stats().decompress_ns);
+    COUNTER_UPDATE(_read_uncompressed_counter, _reader->stats().uncompressed_bytes_read);
+    COUNTER_UPDATE(_bytes_read_counter, _reader->stats().bytes_read);
+
+    COUNTER_UPDATE(_block_load_timer, _reader->stats().block_load_ns);
+    COUNTER_UPDATE(_block_load_counter, _reader->stats().blocks_load);
+    COUNTER_UPDATE(_block_fetch_timer, _reader->stats().block_fetch_ns);
+    COUNTER_UPDATE(_block_seek_timer, _reader->stats().block_seek_ns);
+
+    COUNTER_UPDATE(_chunk_copy_timer, _reader->stats().vec_cond_chunk_copy_ns);
+    COUNTER_UPDATE(_get_delvec_timer, _reader->stats().get_delvec_ns);
+    COUNTER_UPDATE(_get_delta_column_group_timer, _reader->stats().get_delta_column_group_ns);
+    COUNTER_UPDATE(_seg_init_timer, _reader->stats().segment_init_ns);
+    COUNTER_UPDATE(_column_iterator_init_timer, _reader->stats().column_iterator_init_ns);
+    COUNTER_UPDATE(_bitmap_index_iterator_init_timer, _reader->stats().bitmap_index_iterator_init_ns);
+    COUNTER_UPDATE(_segment_init_prepare_timer, _reader->stats().segment_init_prepare_ns);
+    COUNTER_UPDATE(_rowid_range_filter_timer, _reader->stats().rowid_range_filter_ns);
+    COUNTER_UPDATE(_precomputed_range_filter_timer, _reader->stats().precomputed_range_filter_ns);
+    COUNTER_UPDATE(_tablet_range_filter_timer, _reader->stats().tablet_range_filter_ns);
+    COUNTER_UPDATE(_del_vector_apply_timer, _reader->stats().del_vector_apply_ns);
+    COUNTER_UPDATE(_segment_init_finalize_timer, _reader->stats().segment_init_finalize_ns);
+    COUNTER_UPDATE(_zone_map_filter_timer, _reader->stats().zone_map_filter_ns);
+    COUNTER_UPDATE(_rows_key_range_filter_timer, _reader->stats().rows_key_range_filter_ns);
+    COUNTER_UPDATE(_bf_filter_timer, _reader->stats().bf_filter_ns);
+    COUNTER_UPDATE(_read_pk_index_timer, _reader->stats().read_pk_index_ns);
+
+    COUNTER_UPDATE(_raw_rows_counter, _reader->stats().raw_rows_read);
+>>>>>>> 851771ab47d... [Enhancement] Time the remaining SegmentInit phases (#62022)
 
     int64_t cond_evaluate_ns = 0;
     cond_evaluate_ns += reader_stats.vec_cond_evaluate_ns;
@@ -1846,6 +1884,40 @@ void LakeDataSource::update_counter(RuntimeState* state) {
         COUNTER_UPDATE(c, reader_stats.json_flatten_ns);
         FlatJsonMetrics::instance()->flat_json_flatten_duration_ns_total.increment(reader_stats.json_flatten_ns);
     }
+    // Data sampling. The lake path reported none of these, so on a shared-data cluster the whole cost of
+    // sampling was invisible. SampleTime takes sample_time_ns, the elapsed time, not the population count.
+    //
+    // Parented on SegmentInit rather than SegmentRead: _apply_data_sampling() runs from
+    // _init_scan_range_and_context(), inside segment_init_ns, so SegmentRead is a sibling subtree the time
+    // is not part of -- SampleTime there could exceed its own parent. The shared-nothing block in
+    // OlapChunkSource::_update_counter still uses SegmentRead; that counter already ships, so moving it
+    // belongs with the counter re-parenting work rather than here.
+    //
+    // Not covered: with enable_lake_prepared_physical_split_scan on (default off), sampling runs once in
+    // the seed against its own prepare statistics and the precomputed children skip it, so these read
+    // zero. TabletReader::refine_initial_coarse_split_and_append_refined_tasks folds only selected seed
+    // fields into lake_prepared_seed_*, and carries no sampling breakdown; adding one is part of the
+    // seed-parity work, not of this change.
+    const std::string sample_parent_name = "SegmentInit";
+    if (_params.sample_options.enable_sampling) {
+        double sample_percent = _params.sample_options.__isset.probability_percent_v2
+                                        ? _params.sample_options.probability_percent_v2
+                                        : static_cast<double>(_params.sample_options.probability_percent);
+        _runtime_profile->add_info_string("SampleMethod", to_string(_params.sample_options.sample_method));
+        _runtime_profile->add_info_string("SamplePercent", std::to_string(sample_percent) + "%");
+        COUNTER_UPDATE(ADD_CHILD_TIMER(_runtime_profile, "SampleTime", sample_parent_name),
+                       _reader->stats().sample_time_ns);
+        COUNTER_UPDATE(ADD_CHILD_TIMER(_runtime_profile, "SampleBuildHistogramTime", sample_parent_name),
+                       _reader->stats().sample_build_histogram_time_ns);
+        COUNTER_UPDATE(ADD_CHILD_COUNTER(_runtime_profile, "SampleSize", TUnit::UNIT, sample_parent_name),
+                       _reader->stats().sample_size);
+        COUNTER_UPDATE(ADD_CHILD_COUNTER(_runtime_profile, "SamplePopulationSize", TUnit::UNIT, sample_parent_name),
+                       _reader->stats().sample_population_size);
+        COUNTER_UPDATE(
+                ADD_CHILD_COUNTER(_runtime_profile, "SampleBuildHistogramCount", TUnit::UNIT, sample_parent_name),
+                _reader->stats().sample_build_histogram_count);
+    }
+
     if (state != nullptr && state->query_runtime_state() != nullptr) {
         state->query_runtime_state()->incr_read_stats(reader_stats.io_count_local_disk, reader_stats.io_count_remote);
     }

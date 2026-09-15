@@ -1106,8 +1106,15 @@ public class ExplainAnalyzer {
         appendMetric(uniqueMetrics, nodeInfo, "PhySegmentsCount");
         appendMetric(uniqueMetrics, nodeInfo, "PhyRowsetsCount");
         appendMetric(uniqueMetrics, nodeInfo, "TotalColumnsDataPageCount");
+        appendMetric(uniqueMetrics, nodeInfo, "SegmentInit");
         appendMetric(uniqueMetrics, nodeInfo, "ColumnIteratorInit");
         appendMetric(uniqueMetrics, nodeInfo, "BitmapIndexIteratorInit");
+        appendMetric(uniqueMetrics, nodeInfo, "SegmentInitPrepare");
+        appendMetric(uniqueMetrics, nodeInfo, "RowidRangeFilter");
+        appendMetric(uniqueMetrics, nodeInfo, "PrecomputedRangeFilter");
+        appendMetric(uniqueMetrics, nodeInfo, "TabletRangeFilter");
+        appendMetric(uniqueMetrics, nodeInfo, "DelVectorApply");
+        appendMetric(uniqueMetrics, nodeInfo, "SegmentInitFinalize");
         appendMetric(uniqueMetrics, nodeInfo, "FlatJsonInit");
         appendMetric(uniqueMetrics, nodeInfo, "FlatJsonMerge");
         popIndent();
@@ -1775,9 +1782,16 @@ public class ExplainAnalyzer {
                 "RawRowsRead", "RowsRead", "DictDecode", "DictDecodeCount", "ChunkCopy",
                 "IOTime", "BytesRead", "CompressedBytesRead", "UncompressedBytesRead", "ReadPagesNum",
                 "CachedPagesNum", "BlockFetch", "BlockFetchCount", "BlockSeek", "BlockSeekCount", "DecompressTime",
+<<<<<<< HEAD
                 "TabletCount", "SegmentsReadCount", "RowsetsReadCount", "PhySegmentsCount", "PhyRowsetsCount",
                 "TotalColumnsDataPageCount",
                 "ColumnIteratorInit", "BitmapIndexIteratorInit", "FlatJsonInit", "FlatJsonMerge",
+=======
+                "TabletCount", "SegmentsReadCount", "RowsetsReadCount", "TotalColumnsDataPageCount",
+                "SegmentInit", "ColumnIteratorInit", "BitmapIndexIteratorInit", "FlatJsonInit", "FlatJsonMerge",
+                "SegmentInitPrepare", "RowidRangeFilter", "PrecomputedRangeFilter", "TabletRangeFilter",
+                "DelVectorApply", "SegmentInitFinalize",
+>>>>>>> 851771ab47d... [Enhancement] Time the remaining SegmentInit phases (#62022)
                 "IOTaskExecTime", "IOTaskWaitTime", "SubmitTaskCount", "SubmitTaskTime", "PrepareChunkSourceTime",
                 "MorselsCount", "PeakIOTasks", "PeakScanTaskQueueSize", "PeakChunkBufferMemoryUsage",
                 "PeakChunkBufferSize", "ChunkBufferCapacity", "DefaultChunkBufferCapacity",
