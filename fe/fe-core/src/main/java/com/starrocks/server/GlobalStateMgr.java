@@ -1391,6 +1391,36 @@ public class GlobalStateMgr {
         return isReady.get();
     }
 
+<<<<<<< HEAD
+=======
+    /**
+     * Block until the startup materialized view activation pipeline has drained.
+     * <p>
+     * Called from the FE startup path after {@link #waitForReady()} and before any service port is bound, so
+     * that the FE does not accept queries while a large part of the mv plan cache is still being built. A
+     * query whose candidate mv has a pending plan future blocks on it instead of degrading, so opening the
+     * ports early turns a slow startup into a slow service.
+     * <p>
+     * This is a one-shot startup gate and must stay out of {@link #isReady()}: on a follower isReady is
+     * recomputed continuously by the replayer and flips with metadata staleness, while this must happen
+     * exactly once per process.
+     * <p>
+     * {@code enable_mv_startup_activation_gate} only decides whether to wait here. The layered activation itself
+     * runs either way: it is what keeps the mv-plan-cache pool from starving, not part of the gate.
+     */
+    public void waitForStartupMvActivation() throws InterruptedException {
+        if (!Config.enable_mv_startup_activation_gate) {
+            LOG.info("startup mv activation gate is disabled, not waiting for the startup mv activation");
+            return;
+        }
+        mvStartupActivationCoordinator.await();
+    }
+
+    public MvStartupActivationCoordinator getMvStartupActivationCoordinator() {
+        return mvStartupActivationCoordinator;
+    }
+
+>>>>>>> 01e89aeac96... [BugFix][RB-576] Activate MVs layer by layer on FE startup so they cannot starve the mv-plan-cache pool (#65465)
     private void transferToLeader() {
         // Stop the meta freshness checker before the replayer: while this node is a non-leader it is the
         // writer of canRead/isReady, and leader activation below publishes those itself. Its evaluate()
@@ -2342,28 +2372,65 @@ public class GlobalStateMgr {
             }
         }
 
+        // only load image async when FE restart and it's not checkpoint thread to avoid changing original behavior.
+        boolean isReloadAsync = Config.enable_mv_post_image_reload_cache && !isCheckpointThread();
+        if (!isReloadAsync) {
+            reloadMvsSynchronously(allMVs, startMillis);
+            return;
+        }
+
+        // Asynchronous reload: hand the mvs over to the startup coordinator, which activates them layer by layer so
+        // that an mv only starts once every mv it is built on has finished -- submitted all at once, upper mvs could
+        // occupy every mv-plan-cache thread waiting for base mvs queued behind them. The layers are built before any
+        // mv is reloaded, since a reload may rewrite an mv's base table infos. Nothing is awaited here on purpose:
+        // this runs on the image loading thread and journal replay only starts after it returns.
+        List<List<MaterializedView>> layers = MaterializedViewDependencyGraph.buildTopologicalLayers(allMVs);
+        long topoBuildDuration = System.currentTimeMillis() - startMillis;
+        for (MaterializedView mv : allMVs) {
+            mv.prepareForStartupActivation();
+        }
+        int largestLayer = layers.stream().mapToInt(List::size).max().orElse(0);
+        LOG.info("handing {} materialized views in {} topological layers to the startup activation coordinator, " +
+                "largest layer: {}, topo build cost(ms): {}", allMVs.size(), layers.size(), largestLayer,
+                topoBuildDuration);
+        mvStartupActivationCoordinator.schedule(layers, MaterializedView::activateOnStartup);
+
+        LOG.info("finish handing over all materialized views for startup activation in {}ms, total mv count: {}",
+                System.currentTimeMillis() - startMillis, allMVs.size());
+    }
+
+    private void reloadMvsSynchronously(List<MaterializedView> allMVs, long startMillis) {
         // Process in topological order
         List<MaterializedView> topoOrder = Config.enable_mv_post_image_reload_cache ?
                 MaterializedViewDependencyGraph.buildTopologicalOrder(allMVs) : allMVs;
         long topoBuildDuration = System.currentTimeMillis() - startMillis;
+<<<<<<< HEAD
 
         // only load image async when FE restart and it's not checkpoint thread to avoid changing original behavior.
         boolean isReloadAsync = Config.enable_mv_post_image_reload_cache && !isCheckpointThread();
+=======
+>>>>>>> 01e89aeac96... [BugFix][RB-576] Activate MVs layer by layer on FE startup so they cannot starve the mv-plan-cache pool (#65465)
         int size = topoOrder.size();
         for (int i = 0; i < size; i++) {
             MaterializedView mv = topoOrder.get(i);
             String dbName = Optional.ofNullable(localMetastore.getDb(mv.getDbId()))
                     .map(Database::getFullName)
                     .orElse(String.valueOf(mv.getDbId()));
+<<<<<<< HEAD
             LOG.info("start to reload mv {}/{}: {}.{} after load image, isReloadAsync:{}",
                     i + 1, size, dbName, mv.getName(), isReloadAsync);
             // set `postLoadImage` flag to true to indicate that this is called after image loading
             mv.onReload(isReloadAsync);
+=======
+            LOG.info("start to reload mv {}/{}: {}.{} after load image, isReloadAsync:false",
+                    i + 1, size, dbName, mv.getName());
+            mv.onReload(false);
+>>>>>>> 01e89aeac96... [BugFix][RB-576] Activate MVs layer by layer on FE startup so they cannot starve the mv-plan-cache pool (#65465)
         }
 
         long duration = System.currentTimeMillis() - startMillis;
         LOG.info("finish processing all tables' related materialized views in {}ms, " +
-                "isReLoadAsync:{}, total mv count: {}, topo mv order:{}, topo build cost(ms):{}", duration, isReloadAsync,
+                "isReLoadAsync:false, total mv count: {}, topo mv order:{}, topo build cost(ms):{}", duration,
                 allMVs.size(), topoOrder.size(), topoBuildDuration);
     }
 
